@@ -1,5 +1,7 @@
 /*
 Copyright (c) 2015 Steven Arnow <s@rdw.se>
+Adapted for trollbook bios in 2016 by Axel Isaksson
+Separated from trollbook codebase and incorporated upstream bug fixes 2018
 'fat.c' - This file is part of µCFAT
 
 This software is provided 'as-is', without any express or implied
@@ -22,20 +24,20 @@ freely, subject to the following restrictions:
 	distribution.
 */
 
-#ifndef NULL
-#define	NULL	((void *) 0)
-#endif
-
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include "fat.h"
 
 #define	MAX_FD_OPEN		4
-#define	READ_WORD(x, n)		((uint16_t) ((uint16_t) x[(n)] | (((uint16_t) x[(n) + 1]) << 8)))
+#define	READ_WORD(x, n)		((uint16_t) ((uint16_t) (x[(n)]) | (((uint16_t) (x[(n) + 1])) << 8)))
 #define	READ_DWORD(x, n)	read_dword(x, n)
 #define	WRITE_WORD(x, n, w)	((x)[(n)] = (w & 0xFF), (x)[(n) + 1] = ((w) >> 8) & 0xFF)
 #define	WRITE_DWORD(x, n, dw)	write_dword(x, n, dw)
-#define GET_ENTRY_CLUSTER(e)	(((READ_WORD(sector_buff, (e) * 32 + 20) << 16) | (READ_WORD(sector_buff, (e) * 32 + 26))) & (fat_state.type != FAT_TYPE_FAT32 ? 0xFFFF : ~0))
+#define	GET_ENTRY_CLUSTER(e)	(((READ_WORD(sector_buff, (e) * 32 + 20) << 16) | (READ_WORD(sector_buff, (e) * 32 + 26))) & (fat_state.type != FAT_TYPE_FAT32 ? 0xFFFF : ~0))
+
+static int (* write_sector_call)(uint32_t sector, uint8_t *data);
+static int (* read_sector_call)(uint32_t sector, uint8_t *data);
 
 static uint32_t read_dword(uint8_t *buff, int byte) {
 	uint32_t dw;
@@ -53,11 +55,6 @@ static void write_dword(uint8_t *buff, int byte, uint32_t dw) {
 static uint32_t locate_record(const char *path, int *record_index, const char *tail);
 
 uint8_t *sector_buff;
-
-enum FATType {
-	FAT_TYPE_FAT16,
-	FAT_TYPE_FAT32,
-};
 
 
 struct {
@@ -129,19 +126,24 @@ static int read_sector(uint32_t sector, uint8_t *data) {
 }
 
 
-int init_fat() {
-	uint8_t *data = sector_buff;
+int fat_init(int (* read_func)(uint32_t sector, uint8_t *data), int (* write_func)(uint32_t sector, uint8_t *data), uint8_t *buffer) {
+	uint8_t *data;
 	uint16_t reserved_sectors;
 	uint8_t *u8;
 	uint8_t tu8;
 	int err, i;
 	uint32_t fsinfo;
-
+	
+	sector_buff = buffer;
+	data = sector_buff;
+	read_sector_call = read_func;
+	write_sector_call = write_func;
+	
 	if ((err = read_sector(0, data) < 0))
 		return err;
-
+	
 	if (READ_WORD(data, 11) != 512) {
-		//fprintf(stderr, "Only 512 bytes per sector is supported\n");
+		//printf("Only 512 bytes per sector is supported\n");
 		return -1;
 	}
 	fat_state.cluster_size = data[13];
@@ -150,8 +152,8 @@ int init_fat() {
 
 	u8 = &data[16];
 	if (*u8 != 2) {
-		//fprintf(stderr, "Unsupported FAT: %i FAT:s in filesystem, only 2 supported\n", *u8);
-		return -1;
+		//printf("Unsupported FAT: %i FAT:s in filesystem, only 2 supported\n", *u8);
+		return -2;
 	}
 	
 	if (READ_WORD(data, 19)) {
@@ -173,8 +175,8 @@ int init_fat() {
 	else
 		tu8 = data[66];
 	if (tu8 != 0x28 && tu8 != 0x29) {
-	//	fprintf(stderr, "FAT signature check failed\n");
-		return -1;
+		//printf("FAT signature check failed\n");
+		return -3;
 	}
 
 	if (fat_state.type <= FAT_TYPE_FAT16) {
@@ -726,9 +728,9 @@ static bool folder_empty(uint32_t cluster) {
 }
 
 
-bool delete_file(const char *path) {
+bool fat_delete_file(const char *path) {
 	uint32_t i;
-	int index;
+	int index = 0;
 	uint32_t sector, cluster;
 	if (!fat_state.valid)
 		return false;
@@ -760,9 +762,9 @@ bool delete_file(const char *path) {
 }
 
 
-bool create_file(char *path, char *name, uint8_t attrib) {
+bool fat_create_file(char *path, char *name, uint8_t attrib) {
 	uint32_t sector, pcluster, cluster;
-	int index, pindex, i;
+	int index = 0, pindex = 0, i;
 	if (!path) {
 		if (locate_record(name, &i, NULL))
 			return false;
@@ -827,7 +829,7 @@ bool create_file(char *path, char *name, uint8_t attrib) {
 
 uint8_t fat_get_stat(const char *path) {
 	uint32_t sector;
-	int index;
+	int index = 0;
 	if (!(sector = locate_record(path, &index, NULL)))
 		return 0xFF;
 	read_sector(sector, sector_buff);
@@ -837,7 +839,7 @@ uint8_t fat_get_stat(const char *path) {
 
 void fat_set_stat(const char *path, uint8_t stat) {
 	uint32_t sector;
-	int index;
+	int index = 0;
 	if (!(sector = locate_record(path, &index, NULL)))
 		return;
 	read_sector(sector, sector_buff);
@@ -849,7 +851,7 @@ void fat_set_stat(const char *path, uint8_t stat) {
 
 void fat_set_fsize(const char *path, uint32_t size) {
 	uint32_t sector;
-	int index;
+	int index = 0;
 	if (!(sector = locate_record(path, &index, NULL)))
 		return;
 	read_sector(sector, sector_buff);
@@ -861,7 +863,7 @@ void fat_set_fsize(const char *path, uint32_t size) {
 
 int fat_dirlist(const char *path, struct FATDirList *list, int size, int skip) {
 	uint32_t sector, cluster, found;
-	int index, i, j, k, l;
+	int index = 0, i, j, k, l;
 	bool root = false;
 
 	if (!path);
@@ -943,4 +945,33 @@ int fat_dirlist(const char *path, struct FATDirList *list, int size, int skip) {
 
 bool fat_valid() {
 	return fat_state.valid;
+}
+
+FATType fat_type() {
+	return fat_state.type;
+}
+
+int fat_get_label(char *buf) {
+	int err;
+	int i;
+	
+	if(!buf)
+		return -1;
+	*buf = 0;
+	
+	if((err = read_sector(0, sector_buff) < 0))
+		return err;
+	
+	if(fat_state.type == FAT_TYPE_FAT16) {
+		for(i = 43; i < 54; i++)
+			*buf++ = sector_buff[i];
+		*buf = 0;
+	} else if (fat_state.type == FAT_TYPE_FAT32) {
+		for(i = 71; i < 82; i++)
+			*buf++ = sector_buff[i];
+		*buf = 0;
+	} else
+		return -1;
+	
+	return 0;
 }

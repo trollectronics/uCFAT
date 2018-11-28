@@ -1,3 +1,8 @@
+***** Note *****
+This version of µCFAT is modified for Trollbook bare-metal development.
+Changes include namespacing function names and addition of a couple of
+utility functions.
+
 ***** µCFAT *****
 This is a small-ish implementation of FAT16/32.
 It is intended for microcontrollers with a limited amount
