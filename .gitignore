@@ -1,4 +1,15 @@
+*.bak
 *.swp
-*.swo
 *.o
 *.elf
+*.bin
+*.hex
+*.orig
+*.a
+*.dll
+.deps
+build/
+
+_autosave*.kicad_pcb
+*..kicad_pcb-bak
+.~lock*
