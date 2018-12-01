@@ -29,7 +29,6 @@ freely, subject to the following restrictions:
 #include <stdbool.h>
 #include "fat.h"
 
-#define	MAX_FD_OPEN		4
 #define	READ_WORD(x, n)		((uint16_t) ((uint16_t) (x[(n)]) | (((uint16_t) (x[(n) + 1])) << 8)))
 #define	READ_DWORD(x, n)	read_dword(x, n)
 #define	WRITE_WORD(x, n, w)	((x)[(n)] = (w & 0xFF), (x)[(n) + 1] = ((w) >> 8) & 0xFF)
